@@ -34,15 +34,6 @@
       </div>
 
       <div class="nav-actions">
-        <button id="btn-load-demo" class="btn btn-sm" title="Reload Demo 3D Model">
-          <span>🌀 Sample Vase</span>
-        </button>
-
-        <label class="btn btn-sm" style="cursor: pointer;" title="Upload custom G-code">
-          <span>📁 Open G-code</span>
-          <input type="file" id="file-input" accept=".gcode" style="display: none;">
-        </label>
-
         <button id="btn-pip-toggle" class="btn btn-sm" title="Toggle Webcam Picture-in-Picture">
           <span>📹 Webcam</span>
         </button>
@@ -144,14 +135,92 @@
       </div>
     </aside>
 
-    <!-- Camera Presets Toolbar (Right) -->
+    <!-- Camera & Visuals Toolbar (Right) -->
     <nav class="camera-toolbar" aria-label="Camera Views">
-      <button class="cam-btn active" id="cam-iso" title="Isometric Orbit View">📐</button>
-      <button class="cam-btn" id="cam-top" title="Top-Down Layer Inspection">🔝</button>
-      <button class="cam-btn" id="cam-front" title="Front Elevation View">⬛</button>
-      <button class="cam-btn" id="cam-side" title="Side Profile View">◧</button>
-      <button class="cam-btn" id="cam-follow" title="Follow Toolhead Mode">🎯</button>
+      <button class="cam-btn active" id="cam-iso" title="Isometric 3D View">📐</button>
+      <button class="cam-btn" id="cam-top" title="Top-Down Layer View">🔝</button>
+      <button class="cam-btn" id="cam-front" title="Front View">⬛</button>
+      <button class="cam-btn" id="cam-side" title="Side Profile">◧</button>
+      <button class="cam-btn" id="cam-focus" title="Center & Focus on Print Model">🎯</button>
+      <div style="height: 1px; width: 24px; background: var(--border-subtle); margin: 2px auto;"></div>
+      <button class="cam-btn" id="cam-zoom-in" title="Zoom In (+)">➕</button>
+      <button class="cam-btn" id="cam-zoom-out" title="Zoom Out (-)">➖</button>
+      <button class="cam-btn" id="cam-reset" title="Reset Camera">🔄</button>
+      <div style="height: 1px; width: 24px; background: var(--border-subtle); margin: 2px auto;"></div>
+      <button class="cam-btn" id="btn-toggle-visuals" title="Colors & Bed Styling">🎨</button>
     </nav>
+
+    <!-- Floating Appearance Customizer Panel -->
+    <div class="appearance-panel" id="appearance-panel" style="display: none;">
+      <div class="panel-header">
+        <span>Colors & Appearance</span>
+        <button id="btn-close-appearance" class="btn btn-icon" style="width: 20px; height: 20px; font-size: 11px;">✕</button>
+      </div>
+
+      <!-- Bed Styling -->
+      <div class="custom-group">
+        <label class="custom-label">Build Plate Style</label>
+        <div class="color-swatches">
+          <button class="swatch-btn" data-bed="#c89d3c" style="background: linear-gradient(135deg, #d4af37, #99731a);" title="Textured Gold PEI"></button>
+          <button class="swatch-btn active" data-bed="#161a22" style="background: #161a22;" title="Stealth Dark PEI"></button>
+          <button class="swatch-btn" data-bed="#2c3340" style="background: #2c3340;" title="Satin Slate"></button>
+          <button class="swatch-btn" data-bed="#7a8499" style="background: #7a8499;" title="Studio Silver"></button>
+          <label class="swatch-picker-label" title="Custom Bed Color">
+            <input type="color" id="bed-color-picker" value="#161a22" class="color-input">
+            <span>🎨</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Filament Styling -->
+      <div class="custom-group">
+        <label class="custom-label">Filament Color</label>
+        <div class="color-swatches">
+          <button class="swatch-btn active" data-filament="#00f0ff" style="background: #00f0ff;" title="Electric Cyan"></button>
+          <button class="swatch-btn" data-filament="#ffffff" style="background: #ffffff;" title="Pure White PLA"></button>
+          <button class="swatch-btn" data-filament="#ff6f00" style="background: #ff6f00;" title="Prusa Orange"></button>
+          <button class="swatch-btn" data-filament="#ef4444" style="background: #ef4444;" title="Ruby Red"></button>
+          <button class="swatch-btn" data-filament="#10b981" style="background: #10b981;" title="Emerald Green"></button>
+          <button class="swatch-btn" data-filament="#3b82f6" style="background: #3b82f6;" title="Cobalt Blue"></button>
+          <button class="swatch-btn" data-filament="#262b35" style="background: #262b35;" title="Obsidian Black"></button>
+          <label class="swatch-picker-label" title="Custom Filament Color">
+            <input type="color" id="filament-color-picker" value="#00f0ff" class="color-input">
+            <span>🎨</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Background Theme -->
+      <div class="custom-group">
+        <label class="custom-label">Background Theme</label>
+        <div class="color-swatches">
+          <button class="swatch-btn active" data-bg="#090c10" style="background: #090c10;" title="Deep Space"></button>
+          <button class="swatch-btn" data-bg="#000000" style="background: #000000;" title="Pitch Black"></button>
+          <button class="swatch-btn" data-bg="#1a202c" style="background: #1a202c;" title="Studio Slate"></button>
+          <button class="swatch-btn" data-bg="#0e1726" style="background: #0e1726;" title="Midnight Navy"></button>
+        </div>
+      </div>
+
+      <!-- Viewport Element Toggles -->
+      <div class="custom-group" style="border-top: 1px solid var(--border-subtle); padding-top: 10px; margin-top: 10px;">
+        <label class="custom-toggle">
+          <input type="checkbox" id="toggle-grid" checked>
+          <span>Show Bed Grid</span>
+        </label>
+        <label class="custom-toggle">
+          <input type="checkbox" id="toggle-ghost" checked>
+          <span>Ghost Unprinted Layers</span>
+        </label>
+        <label class="custom-toggle">
+          <input type="checkbox" id="toggle-toolhead" checked>
+          <span>Show 3D Hotend Nozzle</span>
+        </label>
+        <label class="custom-toggle">
+          <input type="checkbox" id="toggle-cage">
+          <span>Show Build Volume Box</span>
+        </label>
+      </div>
+    </div>
 
     <!-- Webcam Picture-in-Picture -->
     <div class="webcam-pip" id="webcam-pip" style="display: none;">

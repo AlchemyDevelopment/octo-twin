@@ -393,31 +393,134 @@ function setupEventListeners() {
   el.modeFull.addEventListener('click', () => setViewMode('FULL', el.modeFull));
   el.modeSolo.addEventListener('click', () => setViewMode('LAYER_SOLO', el.modeSolo));
 
-  // 3. Camera Presets
+  // 3. Camera Presets & Movement
   const setCamActive = (btn, preset) => {
-    [el.camIso, el.camTop, el.camFront, el.camSide, el.camFollow].forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
+    [el.camIso, el.camTop, el.camFront, el.camSide].forEach((b) => {
+      if (b) b.classList.remove('active');
+    });
+    if (btn) btn.classList.add('active');
     scene.setCameraView(preset);
   };
 
-  el.camIso.addEventListener('click', () => setCamActive(el.camIso, 'ISO'));
-  el.camTop.addEventListener('click', () => setCamActive(el.camTop, 'TOP'));
-  el.camFront.addEventListener('click', () => setCamActive(el.camFront, 'FRONT'));
-  el.camSide.addEventListener('click', () => setCamActive(el.camSide, 'SIDE'));
-  el.camFollow.addEventListener('click', () => setCamActive(el.camFollow, 'FOLLOW'));
+  if (el.camIso) el.camIso.addEventListener('click', () => setCamActive(el.camIso, 'ISO'));
+  if (el.camTop) el.camTop.addEventListener('click', () => setCamActive(el.camTop, 'TOP'));
+  if (el.camFront) el.camFront.addEventListener('click', () => setCamActive(el.camFront, 'FRONT'));
+  if (el.camSide) el.camSide.addEventListener('click', () => setCamActive(el.camSide, 'SIDE'));
 
-  // 4. File Drag & Drop + File Input
-  el.btnLoadDemo.addEventListener('click', () => {
-    activeMode = 'SIMULATION';
-    setAppStatus('SIMULATING', 'Simulating');
-    loadDemo();
+  const camFocus = document.getElementById('cam-focus');
+  if (camFocus) {
+    camFocus.addEventListener('click', () => {
+      if (parsedGcode && parsedGcode.bounds) {
+        scene.focusOnBounds(parsedGcode.bounds);
+        showToast('Camera focused on print', 'info');
+      } else {
+        scene.resetCameraToIsometric();
+      }
+    });
+  }
+
+  const camZoomIn = document.getElementById('cam-zoom-in');
+  if (camZoomIn) {
+    camZoomIn.addEventListener('click', () => {
+      scene.camera.position.lerp(scene.controls.target, 0.25);
+      scene.controls.update();
+    });
+  }
+
+  const camZoomOut = document.getElementById('cam-zoom-out');
+  if (camZoomOut) {
+    camZoomOut.addEventListener('click', () => {
+      scene.camera.position.sub(scene.controls.target).multiplyScalar(1.3).add(scene.controls.target);
+      scene.controls.update();
+    });
+  }
+
+  const camReset = document.getElementById('cam-reset');
+  if (camReset) {
+    camReset.addEventListener('click', () => {
+      scene.resetCameraToIsometric();
+      showToast('Camera view reset', 'info');
+    });
+  }
+
+  // 4. Appearance & Colors Panel
+  const appearancePanel = document.getElementById('appearance-panel');
+  const btnToggleVisuals = document.getElementById('btn-toggle-visuals');
+  const btnCloseAppearance = document.getElementById('btn-close-appearance');
+
+  if (btnToggleVisuals && appearancePanel) {
+    btnToggleVisuals.addEventListener('click', () => {
+      const isHidden = appearancePanel.style.display === 'none';
+      appearancePanel.style.display = isHidden ? 'block' : 'none';
+    });
+  }
+
+  if (btnCloseAppearance && appearancePanel) {
+    btnCloseAppearance.addEventListener('click', () => {
+      appearancePanel.style.display = 'none';
+    });
+  }
+
+  // Bed Color Swatches
+  document.querySelectorAll('[data-bed]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-bed]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const hex = parseInt(btn.getAttribute('data-bed').replace('#', '0x'), 16);
+      scene.setBedColor(hex);
+    });
   });
 
-  el.fileInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (file) handleLoadedFile(file);
+  const bedPicker = document.getElementById('bed-color-picker');
+  if (bedPicker) {
+    bedPicker.addEventListener('input', (e) => {
+      const hex = parseInt(e.target.value.replace('#', '0x'), 16);
+      scene.setBedColor(hex);
+    });
+  }
+
+  // Filament Color Swatches
+  document.querySelectorAll('[data-filament]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-filament]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const hex = parseInt(btn.getAttribute('data-filament').replace('#', '0x'), 16);
+      gcodeRenderer.setFilamentColor(hex);
+    });
   });
 
+  const filamentPicker = document.getElementById('filament-color-picker');
+  if (filamentPicker) {
+    filamentPicker.addEventListener('input', (e) => {
+      const hex = parseInt(e.target.value.replace('#', '0x'), 16);
+      gcodeRenderer.setFilamentColor(hex);
+    });
+  }
+
+  // Background Theme Swatches
+  document.querySelectorAll('[data-bg]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-bg]').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      const hex = parseInt(btn.getAttribute('data-bg').replace('#', '0x'), 16);
+      scene.setBackgroundColor(hex);
+    });
+  });
+
+  // Toggles
+  const toggleGrid = document.getElementById('toggle-grid');
+  if (toggleGrid) toggleGrid.addEventListener('change', (e) => scene.setGridVisibility(e.target.checked));
+
+  const toggleGhost = document.getElementById('toggle-ghost');
+  if (toggleGhost) toggleGhost.addEventListener('change', (e) => gcodeRenderer.setShowGhost(e.target.checked));
+
+  const toggleToolhead = document.getElementById('toggle-toolhead');
+  if (toggleToolhead) toggleToolhead.addEventListener('change', (e) => toolhead.setVisible(e.target.checked));
+
+  const toggleCage = document.getElementById('toggle-cage');
+  if (toggleCage) toggleCage.addEventListener('change', (e) => scene.setCageVisibility(e.target.checked));
+
+  // Drag & drop custom G-code files still supported via drag
   window.addEventListener('dragover', (e) => {
     e.preventDefault();
     el.dragOverlay.classList.add('active');
@@ -426,6 +529,14 @@ function setupEventListeners() {
   window.addEventListener('dragleave', (e) => {
     if (e.relatedTarget === null) {
       el.dragOverlay.classList.remove('active');
+    }
+  });
+
+  window.addEventListener('drop', (e) => {
+    e.preventDefault();
+    el.dragOverlay.classList.remove('active');
+    if (e.dataTransfer.files.length > 0) {
+      handleLoadedFile(e.dataTransfer.files[0]);
     }
   });
 
