@@ -163,9 +163,19 @@ function handleTelemetry(t) {
   // Update Live Toolhead in 3D Scene
   if (activeMode === 'OCTO_LIVE' && t.x !== undefined && t.y !== undefined && t.z !== undefined) {
     toolhead.setTargetPosition(t.x, t.y, t.z);
-    if (t.currentLayer !== undefined && parsedGcode) {
-      const layerIdx = Math.max(0, (t.currentLayer || 1) - 1);
-      gcodeRenderer.updateProgress(layerIdx, t.progress || 0.5);
+    if (parsedGcode && parsedGcode.layers && parsedGcode.layers.length > 0) {
+      let activeLayerIdx = 0;
+      for (let i = 0; i < parsedGcode.layers.length; i++) {
+        if (parsedGcode.layers[i].z <= t.z + 0.05) {
+          activeLayerIdx = i;
+        } else {
+          break;
+        }
+      }
+      const progressInLayer = t.progress !== undefined ? ((t.progress * parsedGcode.layers.length) - activeLayerIdx) : 0.5;
+      gcodeRenderer.updateProgress(activeLayerIdx, Math.max(0, Math.min(1.0, progressInLayer)));
+      el.hudLayer.textContent = activeLayerIdx + 1;
+      el.hudTotalLayers.textContent = parsedGcode.totalLayers;
     }
   }
 
@@ -353,11 +363,17 @@ function setupEventListeners() {
   el.btnFetchActiveJob.addEventListener('click', async () => {
     try {
       saveSettingsFromUI();
-      showToast('Fetching active G-code from printer...', 'info');
-      const gcodeText = await octoService.downloadCurrentGcode();
-      parseGcodeString(gcodeText, 'active_print.gcode');
-      showToast('Active G-code downloaded successfully!', 'success');
+      showToast('Contacting printer for active G-code...', 'info');
+      const { text, filename } = await octoService.downloadCurrentGcode((loaded, total) => {
+        const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+        const mbTotal = total ? (total / (1024 * 1024)).toFixed(1) : '?';
+        const pct = total ? ` (${Math.round((loaded / total) * 100)}%)` : '';
+        showToast(`Downloading ${filename}: ${mbLoaded}MB / ${mbTotal}MB${pct}`, 'info');
+      });
+      showToast(`Downloaded ${filename}! Parsing toolpaths...`, 'info');
+      parseGcodeString(text, filename);
       closeModal();
+      connectToPrinter();
     } catch (err) {
       showToast(`Failed to fetch G-code: ${err.message}`, 'error');
     }

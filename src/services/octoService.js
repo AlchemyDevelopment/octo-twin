@@ -22,7 +22,7 @@ export class OctoService {
       }
     }
     return {
-      serverUrl: 'https://ender5plus.octoeverywhere.com',
+      serverUrl: 'https://shared-U73WMVCXZBZ511EYIX93F6OKMA8FJ0OP.octoeverywhere.com',
       apiKey: '',
       printerType: 'moonraker', // 'moonraker' | 'octoprint'
       webcamUrl: '',
@@ -288,32 +288,64 @@ export class OctoService {
     this.pollingTimer = setInterval(poll, this.config.pollIntervalMs || 1000);
   }
 
-  async downloadCurrentGcode() {
+  async downloadCurrentGcode(onProgress) {
     const { serverUrl, printerType } = this.config;
     if (!serverUrl) throw new Error('Server URL not configured');
     const base = this.cleanUrl(serverUrl);
     const headers = this.getAuthHeaders();
 
+    let downloadUrl = '';
+    let targetFilename = 'model.gcode';
+
     if (printerType === 'moonraker') {
-      // First find active filename from print_stats
       const statsResp = await fetch(`${base}/printer/objects/query?print_stats=filename`, { headers, credentials: 'include' });
       const stats = await statsResp.json();
       const filename = stats?.result?.status?.print_stats?.filename;
       if (!filename) throw new Error('No active file printing in Moonraker');
-
-      const fileResp = await fetch(`${base}/server/files/gcodes/${encodeURIComponent(filename)}`, { headers, credentials: 'include' });
-      if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
-      return await fileResp.text();
+      targetFilename = filename;
+      downloadUrl = `${base}/server/files/gcodes/${encodeURIComponent(filename)}`;
     } else {
-      // OctoPrint
       const jobResp = await fetch(`${base}/api/job`, { headers, credentials: 'include' });
       const job = await jobResp.json();
-      const fileUrl = job?.job?.file?.resource;
-      if (!fileUrl) throw new Error('No active file found in OctoPrint');
-
-      const fileResp = await fetch(fileUrl, { headers, credentials: 'include' });
-      if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
-      return await fileResp.text();
+      downloadUrl = job?.job?.file?.resource;
+      targetFilename = job?.job?.file?.name || 'model.gcode';
+      if (!downloadUrl) throw new Error('No active file found in OctoPrint');
     }
+
+    const fileResp = await fetch(downloadUrl, { headers, credentials: 'include' });
+    if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
+
+    const contentLength = fileResp.headers.get('content-length');
+    const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+    if (!fileResp.body || !window.ReadableStream) {
+      const text = await fileResp.text();
+      return { text, filename: targetFilename };
+    }
+
+    const reader = fileResp.body.getReader();
+    const chunks = [];
+    let received = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (onProgress) {
+        onProgress(received, total);
+      }
+    }
+
+    const allBytes = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      allBytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+
+    const decoder = new TextDecoder('utf-8');
+    const text = decoder.decode(allBytes);
+    return { text, filename: targetFilename };
   }
 }

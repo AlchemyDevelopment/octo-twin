@@ -1,14 +1,14 @@
 /**
- * Web Worker for parsing G-code asynchronously.
- * Extracts linear moves (G0, G1), layer transitions, and extrusion paths.
+ * High-throughput Web Worker for parsing G-code files.
+ * Uses index scanning to handle multi-megabyte files with minimal memory overhead.
  */
 
 self.onmessage = function (e) {
-  const { type, gcodeText, filamentDiameter = 1.75 } = e.data;
+  const { type, gcodeText } = e.data;
 
   if (type === 'PARSE') {
     try {
-      const result = parseGcode(gcodeText, filamentDiameter);
+      const result = parseGcode(gcodeText);
       self.postMessage({ type: 'SUCCESS', ...result });
     } catch (err) {
       self.postMessage({ type: 'ERROR', error: err.message });
@@ -16,9 +16,9 @@ self.onmessage = function (e) {
   }
 };
 
-function parseGcode(text, filamentDiameter) {
-  const lines = text.split(/\r?\n/);
-  const totalLines = lines.length;
+function parseGcode(text) {
+  const textLen = text.length;
+  let lineStart = 0;
 
   let currentX = 0;
   let currentY = 0;
@@ -28,7 +28,7 @@ function parseGcode(text, filamentDiameter) {
   let isRelativeE = false;
   let isRelativeXYZ = false;
 
-  let currentLayerIndex = -1;
+  let currentLayerIndex = 0;
   let currentLayerZ = 0;
 
   // Bounding box
@@ -36,8 +36,6 @@ function parseGcode(text, filamentDiameter) {
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
 
-  // Temporary storage per layer
-  // Each layer has extrusion moves: [x1, y1, z1, x2, y2, z2, ...]
   const layers = [];
   let currentLayerMoves = [];
   let currentLayerTravels = [];
@@ -45,7 +43,7 @@ function parseGcode(text, filamentDiameter) {
   function finalizeLayer() {
     if (currentLayerMoves.length > 0 || currentLayerTravels.length > 0) {
       layers.push({
-        layerIndex: currentLayerIndex >= 0 ? currentLayerIndex : layers.length,
+        layerIndex: layers.length,
         z: currentLayerZ,
         extrusionPoints: new Float32Array(currentLayerMoves),
         travelPoints: new Float32Array(currentLayerTravels),
@@ -56,37 +54,50 @@ function parseGcode(text, filamentDiameter) {
     }
   }
 
-  for (let i = 0; i < totalLines; i++) {
-    const rawLine = lines[i];
-    // Remove comments while checking for layer hints
-    const commentIndex = rawLine.indexOf(';');
+  let lineCount = 0;
+  let lastProgressReport = 0;
+
+  while (lineStart < textLen) {
+    let lineEnd = text.indexOf('\n', lineStart);
+    if (lineEnd === -1) lineEnd = textLen;
+
+    let line = text.substring(lineStart, lineEnd);
+    lineStart = lineEnd + 1;
+    lineCount++;
+
+    // Strip carriage return
+    if (line.endsWith('\r')) {
+      line = line.substring(0, line.length - 1);
+    }
+
+    // Comment extraction
+    const commentIndex = line.indexOf(';');
     let comment = '';
-    let command = rawLine;
+    let command = line;
 
     if (commentIndex !== -1) {
-      comment = rawLine.substring(commentIndex).toUpperCase();
-      command = rawLine.substring(0, commentIndex);
+      comment = line.substring(commentIndex).toUpperCase();
+      command = line.substring(0, commentIndex);
     }
 
     command = command.trim().toUpperCase();
 
-    // Check layer change comments from common slicers (PrusaSlicer, OrcaSlicer, Bambu, Cura)
-    if (
-      comment.includes('LAYER_CHANGE') ||
-      comment.includes('LAYER:') ||
-      comment.includes('BEFORE_LAYER_CHANGE')
-    ) {
-      const match = comment.match(/LAYER[:\s]+(\d+)/i);
-      const nextLayerIdx = match ? parseInt(match[1], 10) : layers.length;
-      if (nextLayerIdx !== currentLayerIndex) {
-        finalizeLayer();
-        currentLayerIndex = nextLayerIdx;
+    // Check layer changes (PrusaSlicer, OrcaSlicer, Cura, Bambu)
+    if (comment.includes('LAYER_CHANGE') || comment.includes('BEFORE_LAYER_CHANGE') || comment.includes('LAYER:')) {
+      finalizeLayer();
+      currentLayerIndex = layers.length;
+    }
+
+    if (comment.startsWith(';Z:')) {
+      const zVal = parseFloat(comment.substring(3));
+      if (!isNaN(zVal)) {
+        currentLayerZ = zVal;
       }
     }
 
     if (!command) continue;
 
-    // Check modal settings
+    // Check modal commands
     if (command === 'M82') {
       isRelativeE = false;
     } else if (command === 'M83') {
@@ -96,14 +107,12 @@ function parseGcode(text, filamentDiameter) {
     } else if (command === 'G91') {
       isRelativeXYZ = true;
     } else if (command.startsWith('G92')) {
-      // Coordinate reset
-      const eMatch = command.match(/E([\d.-]+)/);
-      if (eMatch) {
-        currentE = parseFloat(eMatch[1]);
+      const match = command.match(/E([\d.-]+)/);
+      if (match) {
+        currentE = parseFloat(match[1]);
         lastE = currentE;
       }
     } else if (command.startsWith('G0') || command.startsWith('G1')) {
-      // Linear move
       const isG0 = command.startsWith('G0');
       const tokens = command.split(/\s+/);
 
@@ -135,22 +144,20 @@ function parseGcode(text, filamentDiameter) {
         }
       }
 
-      // Check if Z changed significantly without a layer comment
-      if (targetZ !== currentZ && Math.abs(targetZ - currentLayerZ) > 0.05 && currentLayerMoves.length > 0) {
+      if (targetZ !== currentZ && Math.abs(targetZ - currentLayerZ) > 0.04 && currentLayerMoves.length > 0) {
         finalizeLayer();
-        currentLayerIndex++;
+        currentLayerIndex = layers.length;
         currentLayerZ = targetZ;
       }
 
       if (hasMove) {
-        const deltaE = isRelativeE ? (targetE - currentE) : (targetE - lastE);
+        const deltaE = isRelativeE ? targetE : (targetE - lastE);
         const isExtrusion = !isG0 && hasE && deltaE > 0.0001;
 
         if (isExtrusion) {
           currentLayerMoves.push(currentX, currentY, currentZ, targetX, targetY, targetZ);
           currentLayerZ = targetZ;
 
-          // Track bounds for extrusion only
           minX = Math.min(minX, currentX, targetX);
           maxX = Math.max(maxX, currentX, targetX);
           minY = Math.min(minY, currentY, targetY);
@@ -158,7 +165,6 @@ function parseGcode(text, filamentDiameter) {
           minZ = Math.min(minZ, currentZ, targetZ);
           maxZ = Math.max(maxZ, currentZ, targetZ);
         } else {
-          // Travel move (skip pure Z hops or huge origin resets to keep buffer clean)
           const distSq = (targetX - currentX) ** 2 + (targetY - currentY) ** 2;
           if (distSq > 0.01 && distSq < 50000) {
             currentLayerTravels.push(currentX, currentY, currentZ, targetX, targetY, targetZ);
@@ -175,18 +181,17 @@ function parseGcode(text, filamentDiameter) {
       }
     }
 
-    // Periodic progress report for very large files
-    if (i % 25000 === 0 && i > 0) {
+    if (lineCount - lastProgressReport > 50000) {
+      lastProgressReport = lineCount;
       self.postMessage({
         type: 'PROGRESS',
-        percent: Math.round((i / totalLines) * 100),
+        percent: Math.round((lineStart / textLen) * 100),
       });
     }
   }
 
   finalizeLayer();
 
-  // If no bounding box found, set defaults
   if (minX === Infinity) {
     minX = 0; maxX = 100;
     minY = 0; maxY = 100;
