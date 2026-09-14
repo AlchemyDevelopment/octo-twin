@@ -88,13 +88,11 @@ export class PrinterScene {
 
     // 1. Bed base plate (Textured PEI Spring Steel look)
     const bedGeom = new THREE.BoxGeometry(x, y, 4);
-    this.bedColor = this.bedColor || 0x1a1e27; // Default sleek dark PEI
+    this.bedColor = this.bedColor || 0x14171f; // True stealth matte black
     this.bedMaterial = new THREE.MeshStandardMaterial({
       color: this.bedColor,
-      metalness: 0.6,
-      roughness: 0.5,
-      emissive: 0xff3b00,
-      emissiveIntensity: 0.0,
+      metalness: 0.2,
+      roughness: 0.85,
     });
     this.bedMesh = new THREE.Mesh(bedGeom, this.bedMaterial);
     this.bedMesh.position.set(x / 2, y / 2, -2);
@@ -103,14 +101,14 @@ export class PrinterScene {
 
     // 2. Subtle beveled edge border
     const edgeGeom = new THREE.BoxGeometry(x + 2, y + 2, 3.8);
-    const edgeMat = new THREE.MeshStandardMaterial({
-      color: 0x2d333f,
-      metalness: 0.8,
-      roughness: 0.3,
+    this.edgeMaterial = new THREE.MeshStandardMaterial({
+      color: 0x222734,
+      metalness: 0.7,
+      roughness: 0.4,
     });
-    const edgeMesh = new THREE.Mesh(edgeGeom, edgeMat);
+    this.edgeMesh = new THREE.Mesh(edgeGeom, this.edgeMaterial);
     edgeMesh.position.set(x / 2, y / 2, -2.1);
-    this.bedGroup.add(edgeMesh);
+    this.bedGroup.add(this.edgeMesh);
 
     // 3. Precision 10mm Grid lines (aligned to printer dimensions)
     const divisions = Math.round(Math.max(x, y) / 10); // Exactly 10mm per square
@@ -147,6 +145,10 @@ export class PrinterScene {
     this.bedColor = hex;
     if (this.bedMaterial) {
       this.bedMaterial.color.set(hex);
+      if (this.bedMaterial.emissive) {
+        this.bedMaterial.emissive.set(0x000000);
+      }
+      this.bedMaterial.needsUpdate = true;
     }
   }
 
@@ -185,9 +187,15 @@ export class PrinterScene {
   }
 
   updateBedTemperature(temp, targetTemp) {
-    if (!this.bedMaterial) return;
-    const ratio = Math.min(1.0, Math.max(0, (temp - 30) / 80));
-    this.bedMaterial.emissiveIntensity = ratio * 0.45;
+    // Keep bed surface clean; only subtly warm the edge accent if hot
+    if (this.edgeMaterial) {
+      const isHot = temp > 45;
+      if (isHot) {
+        this.edgeMaterial.color.set(0x38221f); // Warm dark undertone on edge only
+      } else {
+        this.edgeMaterial.color.set(0x222734);
+      }
+    }
   }
 
   resetCameraToIsometric() {
