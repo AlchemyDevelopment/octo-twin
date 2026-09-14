@@ -112,8 +112,10 @@ export class Toolhead {
   }
 
   update(deltaTime) {
-    // Smooth interpolation towards target coordinates
-    this.currentPosition.lerp(this.targetPosition, this.lerpFactor);
+    // Frame-rate independent smooth lerp without jitter
+    const dt = Math.min(deltaTime || 0.016, 0.1);
+    const factor = 1 - Math.exp(-12 * dt);
+    this.currentPosition.lerp(this.targetPosition, factor);
     this.group.position.copy(this.currentPosition);
   }
 }

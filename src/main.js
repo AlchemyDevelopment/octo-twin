@@ -179,7 +179,6 @@ function initWorker() {
       if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
       parsedGcode = data;
       gcodeRenderer.setGcodeData(parsedGcode);
-      simulator.setGcodeData(parsedGcode);
 
       el.hudTotalLayers.textContent = parsedGcode.totalLayers;
       showToast(`3D Model Ready: ${parsedGcode.totalLayers} layers (${parsedGcode.layers.reduce((acc, l) => acc + l.moveCount, 0).toLocaleString()} moves)`, 'success');
@@ -189,6 +188,7 @@ function initWorker() {
         updatePlayPauseButton(false);
         syncLivePrintProgress(lastReportedZ, lastReportedProgress);
       } else {
+        simulator.setGcodeData(parsedGcode);
         simulator.play();
         updatePlayPauseButton(true);
       }
@@ -286,7 +286,7 @@ async function loadActiveJobFile(filename) {
   }
 }
 
-function syncLivePrintProgress(zHeight, overallProgress) {
+function syncLivePrintProgress(zHeight) {
   if (!parsedGcode || !parsedGcode.layers || parsedGcode.layers.length === 0) return;
   let activeLayerIdx = 0;
   for (let i = 0; i < parsedGcode.layers.length; i++) {
@@ -296,17 +296,21 @@ function syncLivePrintProgress(zHeight, overallProgress) {
       break;
     }
   }
-  const progressInLayer = overallProgress !== undefined ? ((overallProgress * parsedGcode.layers.length) - activeLayerIdx) : 0.5;
-  gcodeRenderer.updateProgress(activeLayerIdx, Math.max(0, Math.min(1.0, progressInLayer)));
+  gcodeRenderer.updateProgress(activeLayerIdx, 1.0, true);
   el.hudLayer.textContent = activeLayerIdx + 1;
   el.hudTotalLayers.textContent = parsedGcode.totalLayers;
 }
 
 // --- TELEMETRY HANDLING ---
 function handleTelemetry(t) {
+  // Ignore simulated telemetry if in live mode
+  if (t.isSimulated && activeMode === 'OCTO_LIVE') {
+    return;
+  }
+
   // Save latest telemetry state
-  if (t.z !== undefined) lastReportedZ = Number(t.z);
-  if (t.progress !== undefined) lastReportedProgress = Number(t.progress);
+  if (t.z !== undefined && t.z !== null) lastReportedZ = Number(t.z);
+  if (t.progress !== undefined && t.progress !== null) lastReportedProgress = Number(t.progress);
 
   // Auto-download active job file if printing
   if (t.filename && activeMode === 'OCTO_LIVE') {
@@ -316,14 +320,18 @@ function handleTelemetry(t) {
   }
 
   // Update Coordinates
-  if (t.x !== undefined) el.hudCoordX.textContent = Number(t.x).toFixed(1);
-  if (t.y !== undefined) el.hudCoordY.textContent = Number(t.y).toFixed(1);
-  if (t.z !== undefined) el.hudCoordZ.textContent = Number(t.z).toFixed(2);
+  if (t.x !== undefined && t.x !== null) el.hudCoordX.textContent = Number(t.x).toFixed(1);
+  if (t.y !== undefined && t.y !== null) el.hudCoordY.textContent = Number(t.y).toFixed(1);
+  if (t.z !== undefined && t.z !== null) el.hudCoordZ.textContent = Number(t.z).toFixed(2);
 
   // Update Live Toolhead & Slicing in 3D Scene
-  if (activeMode === 'OCTO_LIVE' && t.x !== undefined && t.y !== undefined && t.z !== undefined) {
-    toolhead.setTargetPosition(t.x, t.y, t.z);
-    syncLivePrintProgress(t.z, t.progress);
+  if (activeMode === 'OCTO_LIVE') {
+    if (t.x !== undefined && t.y !== undefined && t.z !== undefined) {
+      toolhead.setTargetPosition(Number(t.x), Number(t.y), Number(t.z));
+    }
+    if (t.z !== undefined) {
+      syncLivePrintProgress(Number(t.z));
+    }
   }
 
   // Update Thermals

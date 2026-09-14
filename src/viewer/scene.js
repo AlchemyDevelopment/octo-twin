@@ -45,6 +45,7 @@ export class PrinterScene {
   initCamera() {
     const aspect = this.container.clientWidth / this.container.clientHeight;
     this.camera = new THREE.PerspectiveCamera(45, aspect, 0.5, 2000);
+    this.camera.up.set(0, 0, 1); // Z is vertical up for 3D printers
     this.resetCameraToIsometric();
   }
 
@@ -55,7 +56,8 @@ export class PrinterScene {
     this.controls.screenSpacePanning = true; // Natural Blender / CAD style panning
     this.controls.minDistance = 20;
     this.controls.maxDistance = 1200;
-    this.controls.maxPolarAngle = Math.PI - 0.05; // Full 360 vertical orbit freedom
+    this.controls.minPolarAngle = 0.01;
+    this.controls.maxPolarAngle = Math.PI - 0.01; // Full 360 vertical orbit freedom without singularity
     this.controls.target.set(this.bedDimensions.x / 2, this.bedDimensions.y / 2, 20);
     this.controls.update();
   }
@@ -215,7 +217,7 @@ export class PrinterScene {
       this.camera.position.set(x * 0.5, -y * 0.9, 230);
       this.controls.target.set(x / 2, y / 2, 25);
     } else if (preset === 'TOP') {
-      this.camera.position.set(x / 2, y / 2, 380);
+      this.camera.position.set(x / 2, y / 2 - 0.01, 380);
       this.controls.target.set(x / 2, y / 2, 0);
     } else if (preset === 'FRONT') {
       this.camera.position.set(x / 2, -y * 1.3, 100);

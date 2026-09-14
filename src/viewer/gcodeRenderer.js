@@ -110,11 +110,30 @@ export class GcodeRenderer {
     this.updateProgress(0, 0);
   }
 
-  updateProgress(layerIndex, progressRatio = 1.0) {
-    this.currentLayerIndex = Math.min(layerIndex, this.layers.length - 1);
-    this.currentProgressInLayer = Math.max(0, Math.min(1.0, progressRatio));
-
+  updateProgress(layerIndex, progressRatio = 1.0, isLive = false) {
     if (this.layers.length === 0) return;
+
+    const clampedLayer = Math.max(0, Math.min(layerIndex, this.layers.length - 1));
+    const clampedRatio = Math.max(0, Math.min(1.0, progressRatio));
+
+    const layerChanged = (clampedLayer !== this.currentLayerIndex);
+    const viewChanged = (this.viewMode !== this.lastRenderedViewMode);
+    const ghostChanged = (this.showGhost !== this.lastRenderedGhost);
+    const travelChanged = (this.showTravel !== this.lastRenderedTravel);
+    const liveChanged = (isLive !== this.lastRenderedIsLive);
+
+    this.currentLayerIndex = clampedLayer;
+    this.currentProgressInLayer = clampedRatio;
+
+    // Early return in live mode if layer and view options haven't changed
+    if (isLive && !layerChanged && !viewChanged && !ghostChanged && !travelChanged && !liveChanged) {
+      return;
+    }
+
+    this.lastRenderedViewMode = this.viewMode;
+    this.lastRenderedGhost = this.showGhost;
+    this.lastRenderedTravel = this.showTravel;
+    this.lastRenderedIsLive = isLive;
 
     if (this.viewMode === 'FULL') {
       // Show all layers in solid
@@ -142,15 +161,15 @@ export class GcodeRenderer {
       const mesh = this.layerMeshes[i];
       if (!mesh) continue;
 
-      if (i < this.currentLayerIndex) {
-        // Already finished layer
+      if (i < this.currentLayerIndex || (isLive && i === this.currentLayerIndex)) {
+        // Printed layers (including active layer in live mode)
         mesh.visible = true;
         mesh.material = this.solidMaterial;
-      } else if (i === this.currentLayerIndex) {
-        // Active layer: hide full mesh, activeLayerMesh will show progressive segment
+      } else if (i === this.currentLayerIndex && !isLive) {
+        // In simulation scrub, hide full mesh and draw partial
         mesh.visible = false;
       } else {
-        // Future layer: show ghost or hide
+        // Future unprinted layers: ghosted or hidden
         mesh.visible = this.showGhost;
         mesh.material = this.ghostMaterial;
       }
@@ -160,26 +179,29 @@ export class GcodeRenderer {
       }
     }
 
-    // Render progressive active layer
-    const activeLayer = this.layers[this.currentLayerIndex];
-    if (activeLayer && activeLayer.extrusionPoints && activeLayer.extrusionPoints.length > 0) {
-      const totalPoints = activeLayer.extrusionPoints.length / 3;
-      const countToDraw = Math.floor(totalPoints * this.currentProgressInLayer);
-      // LineSegments require pairs of points (even count)
-      const clampedCount = countToDraw - (countToDraw % 2);
+    // Progressive active layer only for simulation playback, not live printer
+    if (!isLive) {
+      const activeLayer = this.layers[this.currentLayerIndex];
+      if (activeLayer && activeLayer.extrusionPoints && activeLayer.extrusionPoints.length > 0) {
+        const totalPoints = activeLayer.extrusionPoints.length / 3;
+        const countToDraw = Math.floor(totalPoints * this.currentProgressInLayer);
+        const clampedCount = countToDraw - (countToDraw % 2);
 
-      if (clampedCount > 0) {
-        const subArray = activeLayer.extrusionPoints.subarray(0, clampedCount * 3);
-        this.activeLayerGeometry.setAttribute(
-          'position',
-          new THREE.BufferAttribute(subArray, 3)
-        );
-        this.activeLayerMesh.visible = true;
-      } else {
+        if (clampedCount > 0) {
+          const subArray = activeLayer.extrusionPoints.subarray(0, clampedCount * 3);
+          this.activeLayerGeometry.setAttribute(
+            'position',
+            new THREE.BufferAttribute(subArray, 3)
+          );
+          this.activeLayerMesh.visible = true;
+        } else {
+          this.activeLayerMesh.visible = false;
+        }
+      } else if (this.activeLayerMesh) {
         this.activeLayerMesh.visible = false;
       }
-    } else {
-      if (this.activeLayerMesh) this.activeLayerMesh.visible = false;
+    } else if (this.activeLayerMesh) {
+      this.activeLayerMesh.visible = false;
     }
   }
 
