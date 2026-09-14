@@ -13,16 +13,21 @@ export class OctoService {
   }
 
   loadConfig() {
+    const defaultUrl = 'https://shared-U73WMVCXZBZ511EYIX93F6OKMA8FJ0OP.octoeverywhere.com';
     const saved = localStorage.getItem('octo_twin_config');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        if (!parsed.serverUrl || parsed.serverUrl.includes('ender5plus.octoeverywhere.com')) {
+          parsed.serverUrl = defaultUrl;
+        }
+        return parsed;
       } catch (e) {
         console.error('Failed to parse saved config', e);
       }
     }
     return {
-      serverUrl: 'https://shared-U73WMVCXZBZ511EYIX93F6OKMA8FJ0OP.octoeverywhere.com',
+      serverUrl: defaultUrl,
       apiKey: '',
       printerType: 'moonraker', // 'moonraker' | 'octoprint'
       webcamUrl: '',

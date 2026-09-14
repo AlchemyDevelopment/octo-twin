@@ -109,8 +109,15 @@ function init() {
     }
   });
 
-  // 7. Load Default Demo G-code
-  loadDemo();
+  // 7. Auto-connect to printer immediately
+  autoConnectAndSync();
+}
+
+let hasAutoLoadedActiveJob = false;
+
+async function autoConnectAndSync() {
+  setAppStatus('SIMULATING', 'Connecting to Ender 5 Plus...');
+  await connectToPrinter();
 }
 
 function initWorker() {
@@ -153,8 +160,29 @@ function loadDemo() {
   parseGcodeString(demoStr, 'demo_twisted_vase.gcode');
 }
 
+let isDownloadingGcode = false;
+
 // --- TELEMETRY HANDLING ---
 function handleTelemetry(t) {
+  // Auto-download active job file if not yet loaded
+  if (t.filename && (!parsedGcode || parsedGcode.filename !== t.filename) && !isDownloadingGcode && activeMode === 'OCTO_LIVE') {
+    isDownloadingGcode = true;
+    showToast(`Detected active print: ${t.filename}. Downloading toolpaths...`, 'info');
+    octoService.downloadCurrentGcode((loaded, total) => {
+      const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+      const mbTotal = total ? (total / (1024 * 1024)).toFixed(1) : '?';
+      const pct = total ? ` (${Math.round((loaded / total) * 100)}%)` : '';
+      showToast(`Downloading ${t.filename}: ${mbLoaded}MB / ${mbTotal}MB${pct}`, 'info');
+    }).then(({ text, filename }) => {
+      showToast(`Downloaded ${filename}! Generating 3D model...`, 'success');
+      parseGcodeString(text, filename);
+      isDownloadingGcode = false;
+    }).catch((err) => {
+      console.warn('Auto download error', err);
+      isDownloadingGcode = false;
+    });
+  }
+
   // Update Coordinates
   if (t.x !== undefined) el.hudCoordX.textContent = Number(t.x).toFixed(1);
   if (t.y !== undefined) el.hudCoordY.textContent = Number(t.y).toFixed(1);
@@ -198,11 +226,16 @@ function handleTelemetry(t) {
     scene.updateBedTemperature(t.bedTemp, target);
   }
 
+  // Update Filename
+  if (t.filename) {
+    el.hudFilename.textContent = t.filename;
+  }
+
   // Update Layer & Overall Progress
-  if (t.currentLayer !== undefined) {
+  if (t.currentLayer !== undefined && t.currentLayer !== null) {
     el.hudLayer.textContent = t.currentLayer;
   }
-  if (t.totalLayers !== undefined && t.totalLayers > 0) {
+  if (t.totalLayers !== undefined && t.totalLayers !== null && t.totalLayers > 0) {
     el.hudTotalLayers.textContent = t.totalLayers;
   }
   if (t.progress !== undefined) {
@@ -232,14 +265,30 @@ function setAppStatus(status, text) {
   if (status === 'ONLINE') {
     el.statusDot.classList.add('online');
     el.statusText.textContent = text || 'Live Sync';
+    el.btnConnect.innerHTML = '<span>🟢 Live: Ender 5 Plus</span>';
+    el.btnConnect.style.background = 'rgba(16, 185, 129, 0.2)';
+    el.btnConnect.style.borderColor = 'rgba(16, 185, 129, 0.6)';
+    el.btnConnect.style.color = '#10b981';
   } else if (status === 'SIMULATING') {
     el.statusDot.classList.add('simulating');
     el.statusText.textContent = text || 'Simulating';
+    el.btnConnect.innerHTML = '<span>⚡ Connect Ender 5 Plus</span>';
+    el.btnConnect.style.background = '';
+    el.btnConnect.style.borderColor = '';
+    el.btnConnect.style.color = '';
   } else if (status === 'ERROR') {
     el.statusDot.classList.add('error');
     el.statusText.textContent = text || 'Error';
+    el.btnConnect.innerHTML = '<span>⚠️ Reconnect</span>';
+    el.btnConnect.style.background = 'rgba(239, 68, 68, 0.2)';
+    el.btnConnect.style.borderColor = 'rgba(239, 68, 68, 0.6)';
+    el.btnConnect.style.color = '#ef4444';
   } else {
     el.statusText.textContent = text || 'Disconnected';
+    el.btnConnect.innerHTML = '<span>⚡ Connect OctoEverywhere</span>';
+    el.btnConnect.style.background = '';
+    el.btnConnect.style.borderColor = '';
+    el.btnConnect.style.color = '';
   }
 }
 
@@ -346,7 +395,13 @@ function setupEventListeners() {
   });
 
   // 6. Settings & Connect Modal
-  el.btnConnect.addEventListener('click', () => openModal());
+  el.btnConnect.addEventListener('click', () => {
+    if (activeMode === 'OCTO_LIVE') {
+      openModal();
+    } else {
+      connectToPrinter();
+    }
+  });
   el.btnSettings.addEventListener('click', () => openModal());
   el.btnModalClose.addEventListener('click', () => closeModal());
   el.settingsModal.addEventListener('click', (e) => {
