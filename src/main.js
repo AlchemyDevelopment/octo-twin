@@ -5,12 +5,16 @@ import { GcodeRenderer } from './viewer/gcodeRenderer.js';
 import { OctoService } from './services/octoService.js';
 import { PrintSimulator } from './services/simulator.js';
 import { generateDemoGcode } from './assets/demoGcode.js';
+import { getCachedGcode, setCachedGcode } from './services/gcodeCache.js';
 
 // --- APPLICATION STATE ---
 let scene, toolhead, gcodeRenderer, octoService, simulator;
 let gcodeWorker = null;
 let parsedGcode = null;
 let activeMode = 'SIMULATION'; // 'SIMULATION' | 'OCTO_LIVE'
+let loadedFilename = '';
+let lastReportedZ = 0;
+let lastReportedProgress = 0;
 
 // UI Elements Cache
 const el = {
@@ -18,6 +22,10 @@ const el = {
   statusDot: document.getElementById('status-dot'),
   statusText: document.getElementById('status-text'),
   hudFilename: document.getElementById('hud-filename'),
+  hudDownloadStatus: document.getElementById('hud-download-status'),
+  hudDownloadLabel: document.getElementById('hud-download-label'),
+  hudDownloadPct: document.getElementById('hud-download-pct'),
+  hudDownloadBar: document.getElementById('hud-download-bar'),
   hudLayer: document.getElementById('hud-layer'),
   hudTotalLayers: document.getElementById('hud-total-layers'),
   hudPercent: document.getElementById('hud-percent'),
@@ -128,18 +136,23 @@ function initWorker() {
   gcodeWorker.onmessage = (e) => {
     const data = e.data;
     if (data.type === 'PROGRESS') {
-      showToast(`Parsing G-code: ${data.percent}%`, 'info');
+      showToast(`Generating 3D Toolpaths: ${data.percent}%`, 'info');
     } else if (data.type === 'SUCCESS') {
       parsedGcode = data;
       gcodeRenderer.setGcodeData(parsedGcode);
       simulator.setGcodeData(parsedGcode);
 
       el.hudTotalLayers.textContent = parsedGcode.totalLayers;
-      showToast(`Loaded ${parsedGcode.totalLayers} layers (${parsedGcode.layers.reduce((acc, l) => acc + l.moveCount, 0).toLocaleString()} moves)`, 'success');
+      showToast(`3D Model Ready: ${parsedGcode.totalLayers} layers (${parsedGcode.layers.reduce((acc, l) => acc + l.moveCount, 0).toLocaleString()} moves)`, 'success');
 
-      // Auto start simulation on demo load
-      simulator.play();
-      updatePlayPauseButton(true);
+      if (activeMode === 'OCTO_LIVE') {
+        simulator.pause();
+        updatePlayPauseButton(false);
+        syncLivePrintProgress(lastReportedZ, lastReportedProgress);
+      } else {
+        simulator.play();
+        updatePlayPauseButton(true);
+      }
     } else if (data.type === 'ERROR') {
       showToast(`Error parsing G-code: ${data.error}`, 'error');
     }
@@ -147,8 +160,9 @@ function initWorker() {
 }
 
 function parseGcodeString(gcodeStr, filename = 'custom_model.gcode') {
+  loadedFilename = filename;
   el.hudFilename.textContent = filename;
-  showToast('Parsing toolpaths...', 'info');
+  showToast(`Parsing ${filename}...`, 'info');
   gcodeWorker.postMessage({
     type: 'PARSE',
     gcodeText: gcodeStr,
@@ -162,25 +176,78 @@ function loadDemo() {
 
 let isDownloadingGcode = false;
 
-// --- TELEMETRY HANDLING ---
-function handleTelemetry(t) {
-  // Auto-download active job file if not yet loaded
-  if (t.filename && (!parsedGcode || parsedGcode.filename !== t.filename) && !isDownloadingGcode && activeMode === 'OCTO_LIVE') {
-    isDownloadingGcode = true;
-    showToast(`Detected active print: ${t.filename}. Downloading toolpaths...`, 'info');
-    octoService.downloadCurrentGcode((loaded, total) => {
+async function loadActiveJobFile(filename) {
+  if (isDownloadingGcode || (parsedGcode && loadedFilename === filename)) return;
+  isDownloadingGcode = true;
+  loadedFilename = filename;
+  el.hudFilename.textContent = filename;
+
+  // 1. Check local IndexedDB cache first
+  const cached = await getCachedGcode(filename);
+  if (cached) {
+    showToast(`Loaded ${filename} from cache! Parsing toolpaths...`, 'success');
+    parseGcodeString(cached, filename);
+    isDownloadingGcode = false;
+    return;
+  }
+
+  // 2. Stream download from printer
+  if (el.hudDownloadStatus) {
+    el.hudDownloadStatus.style.display = 'block';
+    el.hudDownloadLabel.textContent = `Downloading ${filename}`;
+    el.hudDownloadPct.textContent = '0%';
+    el.hudDownloadBar.style.width = '0%';
+  }
+
+  try {
+    const { text } = await octoService.downloadCurrentGcode((loaded, total) => {
       const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
       const mbTotal = total ? (total / (1024 * 1024)).toFixed(1) : '?';
-      const pct = total ? ` (${Math.round((loaded / total) * 100)}%)` : '';
-      showToast(`Downloading ${t.filename}: ${mbLoaded}MB / ${mbTotal}MB${pct}`, 'info');
-    }).then(({ text, filename }) => {
-      showToast(`Downloaded ${filename}! Generating 3D model...`, 'success');
-      parseGcodeString(text, filename);
-      isDownloadingGcode = false;
-    }).catch((err) => {
-      console.warn('Auto download error', err);
-      isDownloadingGcode = false;
+      const pct = total ? Math.round((loaded / total) * 100) : 0;
+      if (el.hudDownloadStatus) {
+        el.hudDownloadLabel.textContent = `${mbLoaded}MB / ${mbTotal}MB`;
+        el.hudDownloadPct.textContent = `${pct}%`;
+        el.hudDownloadBar.style.width = `${pct}%`;
+      }
     });
+
+    if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
+    showToast(`Download finished (${(text.length / (1024 * 1024)).toFixed(1)}MB)! Caching...`, 'success');
+    await setCachedGcode(filename, text);
+    parseGcodeString(text, filename);
+  } catch (err) {
+    if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
+    showToast(`Failed to download G-code: ${err.message}`, 'error');
+  } finally {
+    isDownloadingGcode = false;
+  }
+}
+
+function syncLivePrintProgress(zHeight, overallProgress) {
+  if (!parsedGcode || !parsedGcode.layers || parsedGcode.layers.length === 0) return;
+  let activeLayerIdx = 0;
+  for (let i = 0; i < parsedGcode.layers.length; i++) {
+    if (parsedGcode.layers[i].z <= zHeight + 0.05) {
+      activeLayerIdx = i;
+    } else {
+      break;
+    }
+  }
+  const progressInLayer = overallProgress !== undefined ? ((overallProgress * parsedGcode.layers.length) - activeLayerIdx) : 0.5;
+  gcodeRenderer.updateProgress(activeLayerIdx, Math.max(0, Math.min(1.0, progressInLayer)));
+  el.hudLayer.textContent = activeLayerIdx + 1;
+  el.hudTotalLayers.textContent = parsedGcode.totalLayers;
+}
+
+// --- TELEMETRY HANDLING ---
+function handleTelemetry(t) {
+  // Save latest telemetry state
+  if (t.z !== undefined) lastReportedZ = Number(t.z);
+  if (t.progress !== undefined) lastReportedProgress = Number(t.progress);
+
+  // Auto-download active job file if printing
+  if (t.filename && (!parsedGcode || loadedFilename !== t.filename) && activeMode === 'OCTO_LIVE') {
+    loadActiveJobFile(t.filename);
   }
 
   // Update Coordinates
@@ -188,23 +255,10 @@ function handleTelemetry(t) {
   if (t.y !== undefined) el.hudCoordY.textContent = Number(t.y).toFixed(1);
   if (t.z !== undefined) el.hudCoordZ.textContent = Number(t.z).toFixed(2);
 
-  // Update Live Toolhead in 3D Scene
+  // Update Live Toolhead & Slicing in 3D Scene
   if (activeMode === 'OCTO_LIVE' && t.x !== undefined && t.y !== undefined && t.z !== undefined) {
     toolhead.setTargetPosition(t.x, t.y, t.z);
-    if (parsedGcode && parsedGcode.layers && parsedGcode.layers.length > 0) {
-      let activeLayerIdx = 0;
-      for (let i = 0; i < parsedGcode.layers.length; i++) {
-        if (parsedGcode.layers[i].z <= t.z + 0.05) {
-          activeLayerIdx = i;
-        } else {
-          break;
-        }
-      }
-      const progressInLayer = t.progress !== undefined ? ((t.progress * parsedGcode.layers.length) - activeLayerIdx) : 0.5;
-      gcodeRenderer.updateProgress(activeLayerIdx, Math.max(0, Math.min(1.0, progressInLayer)));
-      el.hudLayer.textContent = activeLayerIdx + 1;
-      el.hudTotalLayers.textContent = parsedGcode.totalLayers;
-    }
+    syncLivePrintProgress(t.z, t.progress);
   }
 
   // Update Thermals

@@ -63,7 +63,16 @@
       <div class="hud-panel">
         <div class="panel-title">
           <span>Print Progress</span>
-          <span id="hud-filename" style="color: var(--accent-cyan); font-weight: 500; text-transform: none; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">demo_vase.gcode</span>
+          <span id="hud-filename" style="color: var(--accent-cyan); font-weight: 500; text-transform: none; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Connecting...</span>
+        </div>
+        <div id="hud-download-status" style="display: none; margin-bottom: 10px; font-size: 11px; padding: 6px 8px; border-radius: 6px; background: rgba(0, 240, 255, 0.1); border: 1px solid rgba(0, 240, 255, 0.25); color: var(--accent-cyan);">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+            <span id="hud-download-label">Downloading G-code...</span>
+            <span id="hud-download-pct" style="font-weight: 600;">0%</span>
+          </div>
+          <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+            <div id="hud-download-bar" style="width: 0%; height: 100%; background: var(--accent-cyan); transition: width 0.15s ease;"></div>
+          </div>
         </div>
         <div class="layer-stats">
           <span style="color: var(--text-muted);">Layer <strong id="hud-layer" style="color: #fff;">1</strong> / <span id="hud-total-layers">45</span></span>

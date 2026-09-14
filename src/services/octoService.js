@@ -133,6 +133,23 @@ export class OctoService {
           id: 101,
         };
         this.ws.send(JSON.stringify(subMsg));
+
+        // Also query full state immediately to guarantee initial snapshot
+        const queryMsg = {
+          jsonrpc: '2.0',
+          method: 'printer.objects.query',
+          params: {
+            objects: {
+              toolhead: null,
+              extruder: null,
+              heater_bed: null,
+              print_stats: null,
+              virtual_sdcard: null,
+            },
+          },
+          id: 102,
+        };
+        this.ws.send(JSON.stringify(queryMsg));
       };
 
       this.ws.onmessage = (event) => {
@@ -162,44 +179,50 @@ export class OctoService {
   }
 
   handleMoonrakerMessage(msg) {
+    let status = null;
     if (msg.method === 'notify_status_update' && msg.params && msg.params[0]) {
-      const status = msg.params[0];
-      const telemetry = {
-        type: 'TELEMETRY',
-        timestamp: Date.now(),
-      };
-
-      if (status.toolhead && status.toolhead.position) {
-        telemetry.x = status.toolhead.position[0];
-        telemetry.y = status.toolhead.position[1];
-        telemetry.z = status.toolhead.position[2];
-      }
-
-      if (status.extruder) {
-        telemetry.toolTemp = status.extruder.temperature;
-        telemetry.toolTarget = status.extruder.target;
-      }
-
-      if (status.heater_bed) {
-        telemetry.bedTemp = status.heater_bed.temperature;
-        telemetry.bedTarget = status.heater_bed.target;
-      }
-
-      if (status.virtual_sdcard && status.virtual_sdcard.progress !== undefined) {
-        telemetry.progress = status.virtual_sdcard.progress;
-      }
-
-      if (status.print_stats) {
-        telemetry.printState = status.print_stats.state;
-        telemetry.filename = status.print_stats.filename;
-        if (status.print_stats.info) {
-          telemetry.currentLayer = status.print_stats.info.current_layer;
-          telemetry.totalLayers = status.print_stats.info.total_layer;
-        }
-      }
-
-      this.emit(telemetry);
+      status = msg.params[0];
+    } else if (msg.result && msg.result.status) {
+      status = msg.result.status;
     }
+
+    if (!status) return;
+
+    const telemetry = {
+      type: 'TELEMETRY',
+      timestamp: Date.now(),
+    };
+
+    if (status.toolhead && status.toolhead.position) {
+      telemetry.x = status.toolhead.position[0];
+      telemetry.y = status.toolhead.position[1];
+      telemetry.z = status.toolhead.position[2];
+    }
+
+    if (status.extruder) {
+      telemetry.toolTemp = status.extruder.temperature;
+      telemetry.toolTarget = status.extruder.target;
+    }
+
+    if (status.heater_bed) {
+      telemetry.bedTemp = status.heater_bed.temperature;
+      telemetry.bedTarget = status.heater_bed.target;
+    }
+
+    if (status.virtual_sdcard && status.virtual_sdcard.progress !== undefined) {
+      telemetry.progress = status.virtual_sdcard.progress;
+    }
+
+    if (status.print_stats) {
+      telemetry.printState = status.print_stats.state;
+      telemetry.filename = status.print_stats.filename;
+      if (status.print_stats.info) {
+        telemetry.currentLayer = status.print_stats.info.current_layer;
+        telemetry.totalLayers = status.print_stats.info.total_layer;
+      }
+    }
+
+    this.emit(telemetry);
   }
 
   startMoonrakerPolling(base) {
