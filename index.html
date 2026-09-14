@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OctoTwin — Real-Time 3D Print Visualizer & Digital Twin</title>
+  <meta name="description" content="High-performance real-time 3D print visualizer powered by Three.js and OctoEverywhere. Digital twin synchronization with live toolhead tracking and telemetry.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2300f0ff'/><path d='M25 70 L50 25 L75 70 Z' fill='%23090c10'/></svg>">
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <div id="app-container">
+    <!-- 3D Three.js Viewport -->
+    <div id="viewport"></div>
+
+    <!-- Drag and Drop Overlay -->
+    <div id="drag-overlay" class="drag-overlay">
+      <div class="drag-title">Drop G-code File Here</div>
+      <p style="color: var(--text-muted); font-size: 14px;">Instant parsing and 3D toolpath rendering</p>
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <header class="top-nav">
+      <div class="brand-section">
+        <div class="brand-logo">⬡</div>
+        <h1 class="brand-title">
+          OctoTwin
+          <span class="brand-badge">Three.js</span>
+        </h1>
+        <div class="status-pill" id="status-pill">
+          <span class="status-dot simulating" id="status-dot"></span>
+          <span id="status-text">Simulating</span>
+        </div>
+      </div>
+
+      <div class="nav-actions">
+        <button id="btn-load-demo" class="btn btn-sm" title="Reload Demo 3D Model">
+          <span>🌀 Sample Vase</span>
+        </button>
+
+        <label class="btn btn-sm" style="cursor: pointer;" title="Upload custom G-code">
+          <span>📁 Open G-code</span>
+          <input type="file" id="file-input" accept=".gcode" style="display: none;">
+        </label>
+
+        <button id="btn-pip-toggle" class="btn btn-sm" title="Toggle Webcam Picture-in-Picture">
+          <span>📹 Webcam</span>
+        </button>
+
+        <button id="btn-connect" class="btn btn-primary btn-sm">
+          <span>⚡ Connect OctoEverywhere</span>
+        </button>
+
+        <button id="btn-settings" class="btn btn-icon btn-sm" title="Preferences">
+          ⚙️
+        </button>
+      </div>
+    </header>
+
+    <!-- Telemetry HUD (Left) -->
+    <aside class="telemetry-hud">
+      <!-- Job Status & Layer Progress -->
+      <div class="hud-panel">
+        <div class="panel-title">
+          <span>Print Progress</span>
+          <span id="hud-filename" style="color: var(--accent-cyan); font-weight: 500; text-transform: none; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">demo_vase.gcode</span>
+        </div>
+        <div class="layer-stats">
+          <span style="color: var(--text-muted);">Layer <strong id="hud-layer" style="color: #fff;">1</strong> / <span id="hud-total-layers">45</span></span>
+          <span id="hud-percent" style="font-weight: 600; color: var(--accent-cyan);">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="hud-progress-fill"></div>
+        </div>
+        <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 11px; color: var(--text-muted);">
+          <span>Elapsed: <strong id="hud-elapsed" style="color: #fff;">00:00</strong></span>
+          <span>Left: <strong id="hud-remaining" style="color: #fff;">20:00</strong></span>
+        </div>
+      </div>
+
+      <!-- Thermal Monitoring -->
+      <div class="hud-panel">
+        <div class="panel-title">
+          <span>Thermals</span>
+          <span style="font-size: 10px; color: var(--accent-orange);">ACTIVE</span>
+        </div>
+        <div class="temp-grid">
+          <div class="temp-card">
+            <div class="temp-label">
+              <span>🔥 Nozzle</span>
+            </div>
+            <div class="temp-val">
+              <span id="hud-nozzle-temp">25</span>°
+              <span class="temp-target">/ <span id="hud-nozzle-target">215</span>°</span>
+            </div>
+            <div class="temp-bar-bg">
+              <div class="temp-bar-fill fill-nozzle" id="hud-nozzle-bar" style="width: 12%;"></div>
+            </div>
+          </div>
+
+          <div class="temp-card">
+            <div class="temp-label">
+              <span>♨️ Bed</span>
+            </div>
+            <div class="temp-val">
+              <span id="hud-bed-temp">25</span>°
+              <span class="temp-target">/ <span id="hud-bed-target">60</span>°</span>
+            </div>
+            <div class="temp-bar-bg">
+              <div class="temp-bar-fill fill-bed" id="hud-bed-bar" style="width: 40%;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toolhead Coordinates -->
+      <div class="hud-panel">
+        <div class="panel-title">
+          <span>Toolhead Position (mm)</span>
+        </div>
+        <div class="coords-grid">
+          <div class="coord-item">
+            <div class="coord-axis">X</div>
+            <div class="coord-val" id="hud-coord-x">117.5</div>
+          </div>
+          <div class="coord-item">
+            <div class="coord-axis">Y</div>
+            <div class="coord-val" id="hud-coord-y">117.5</div>
+          </div>
+          <div class="coord-item">
+            <div class="coord-axis">Z</div>
+            <div class="coord-val" id="hud-coord-z">0.28</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Camera Presets Toolbar (Right) -->
+    <nav class="camera-toolbar" aria-label="Camera Views">
+      <button class="cam-btn active" id="cam-iso" title="Isometric Orbit View">📐</button>
+      <button class="cam-btn" id="cam-top" title="Top-Down Layer Inspection">🔝</button>
+      <button class="cam-btn" id="cam-front" title="Front Elevation View">⬛</button>
+      <button class="cam-btn" id="cam-side" title="Side Profile View">◧</button>
+      <button class="cam-btn" id="cam-follow" title="Follow Toolhead Mode">🎯</button>
+    </nav>
+
+    <!-- Webcam Picture-in-Picture -->
+    <div class="webcam-pip" id="webcam-pip" style="display: none;">
+      <div class="webcam-header">
+        <div class="webcam-live-indicator">
+          <span class="rec-dot"></span>
+          <span>LIVE CAM</span>
+        </div>
+        <div style="display: flex; gap: 4px;">
+          <button id="webcam-close" class="btn btn-icon" style="width: 22px; height: 22px; font-size: 10px;">✕</button>
+        </div>
+      </div>
+      <div class="webcam-viewport">
+        <img id="webcam-feed" class="webcam-img" src="" alt="Printer Webcam Stream" style="display: none;">
+        <div id="webcam-empty-state" class="webcam-placeholder">
+          Enter your OctoEverywhere webcam stream URL in Settings
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Controls Bar -->
+    <footer class="bottom-controls">
+      <div class="controls-group">
+        <button id="btn-play-pause" class="btn btn-sm btn-primary">
+          <span id="play-pause-icon">▶</span>
+          <span id="play-pause-text">Play Simulation</span>
+        </button>
+        <button id="btn-reset-sim" class="btn btn-sm btn-icon" title="Reset Simulation">↺</button>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- Scrubber -->
+      <div class="controls-group" style="width: 220px; display: flex; align-items: center; gap: 8px;">
+        <span style="font-size: 11px; color: var(--text-muted);">Scrub:</span>
+        <input type="range" id="sim-scrubber" min="0" max="1000" value="0" style="width: 100%; accent-color: var(--accent-cyan); cursor: pointer;">
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- Speed Multiplier -->
+      <div class="controls-group">
+        <span style="font-size: 11px; color: var(--text-muted);">Speed:</span>
+        <select id="sim-speed" class="speed-select">
+          <option value="1">1x (Real-time)</option>
+          <option value="5">5x</option>
+          <option value="10" selected>10x</option>
+          <option value="25">25x</option>
+          <option value="50">50x</option>
+          <option value="100">100x</option>
+        </select>
+      </div>
+
+      <div class="divider-v"></div>
+
+      <!-- View Modes -->
+      <div class="controls-group">
+        <button class="btn btn-sm view-mode-btn active" id="mode-live" title="Render completed and current active toolpath">Live Print</button>
+        <button class="btn btn-sm view-mode-btn" id="mode-full" title="Render all toolpaths in full">Full Model</button>
+        <button class="btn btn-sm view-mode-btn" id="mode-solo" title="Inspect current layer only">Solo Layer</button>
+      </div>
+    </footer>
+
+    <!-- Settings & OctoEverywhere Connect Modal -->
+    <div class="modal-overlay" id="settings-modal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title">OctoEverywhere & Printer Settings</div>
+          <button id="btn-modal-close" class="btn btn-icon" style="width: 28px; height: 28px;">✕</button>
+        </div>
+
+        <form id="settings-form">
+          <div class="form-group">
+            <label class="form-label" for="cfg-server-url">OctoEverywhere / Printer URL</label>
+            <input type="url" id="cfg-server-url" class="form-input" placeholder="https://xxxx.octoeverywhere.com or http://192.168.1.50">
+            <div class="form-help">Your secure OctoEverywhere remote portal link or local printer IP.</div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="cfg-printer-type">Printer Firmware</label>
+              <select id="cfg-printer-type" class="form-select">
+                <option value="moonraker">Klipper / Moonraker (Fluidd, Mainsail)</option>
+                <option value="octoprint">OctoPrint</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="cfg-api-key">API Key / Token (Optional)</label>
+              <input type="password" id="cfg-api-key" class="form-input" placeholder="API Key or Bearer Token">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="cfg-webcam-url">Webcam Stream URL (Optional)</label>
+            <input type="url" id="cfg-webcam-url" class="form-input" placeholder="e.g. https://xxxx.octoeverywhere.com/webcam/?action=stream">
+            <div class="form-help">OctoEverywhere webcam stream link for live picture-in-picture comparison.</div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="cfg-bed-preset">Build Plate Preset</label>
+              <select id="cfg-bed-preset" class="form-select">
+                <option value="235,235,250">Ender 3 / Neptune (235 × 235 × 250)</option>
+                <option value="256,256,256">Bambu Lab X1/P1/A1 (256 × 256 × 256)</option>
+                <option value="250,210,220">Prusa MK3/MK4 (250 × 210 × 220)</option>
+                <option value="300,300,300">Voron 2.4 / K1 Max (300 × 300 × 300)</option>
+                <option value="180,180,180">Prusa Mini / A1 Mini (180 × 180 × 180)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="cfg-filament-color">Filament Color</label>
+              <select id="cfg-filament-color" class="form-select">
+                <option value="#00f0ff">Neon Cyan</option>
+                <option value="#ff7700">Prusa Orange</option>
+                <option value="#3b82f6">Cobalt Blue</option>
+                <option value="#10b981">Emerald Green</option>
+                <option value="#e11d48">Ruby Red</option>
+                <option value="#ffd700">Silk Gold</option>
+                <option value="#ffffff">Matte White</option>
+                <option value="#22272e">Stealth Charcoal</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="form-group" style="display: flex; gap: 16px; margin-top: 10px;">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+              <input type="checkbox" id="cfg-show-ghost" checked>
+              <span>Ghost Remaining Layers</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;">
+              <input type="checkbox" id="cfg-show-travel">
+              <span>Show Travel Moves</span>
+            </label>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" id="btn-fetch-active-job" class="btn btn-sm">
+              📥 Fetch Active G-code
+            </button>
+            <button type="submit" class="btn btn-primary btn-sm">
+              Save & Connect
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast info">
+      <span id="toast-message">Ready</span>
+    </div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
