@@ -151,6 +151,11 @@ async function autoConnectAndSync() {
   await connectToPrinter();
 }
 
+let isDownloadingGcode = false;
+let isParsingGcode = false;
+let activeJobFile = null;
+let currentParseJobId = 0;
+
 function initWorker() {
   gcodeWorker = new Worker(new URL('./parser/gcodeWorker.js', import.meta.url), {
     type: 'module',
@@ -158,9 +163,20 @@ function initWorker() {
 
   gcodeWorker.onmessage = (e) => {
     const data = e.data;
+    if (data.jobId && data.jobId !== currentParseJobId) {
+      return; // Ignore stale job results
+    }
+
     if (data.type === 'PROGRESS') {
-      showToast(`Generating 3D Toolpaths: ${data.percent}%`, 'info');
+      if (el.hudDownloadStatus) {
+        el.hudDownloadStatus.style.display = 'block';
+        el.hudDownloadLabel.textContent = `Generating Toolpaths: ${loadedFilename || 'model'}`;
+        el.hudDownloadPct.textContent = `${data.percent}%`;
+        el.hudDownloadBar.style.width = `${data.percent}%`;
+      }
     } else if (data.type === 'SUCCESS') {
+      isParsingGcode = false;
+      if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
       parsedGcode = data;
       gcodeRenderer.setGcodeData(parsedGcode);
       simulator.setGcodeData(parsedGcode);
@@ -177,44 +193,67 @@ function initWorker() {
         updatePlayPauseButton(true);
       }
     } else if (data.type === 'ERROR') {
+      isParsingGcode = false;
+      activeJobFile = null;
+      if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
       showToast(`Error parsing G-code: ${data.error}`, 'error');
     }
   };
 }
 
-function parseGcodeString(gcodeStr, filename = 'custom_model.gcode') {
+function parseGcodeString(gcodeStr, filename = 'custom_model.gcode', force = false) {
+  if (isParsingGcode && loadedFilename === filename && !force) {
+    return;
+  }
+  isParsingGcode = true;
   loadedFilename = filename;
+  activeJobFile = filename;
+  currentParseJobId = Date.now();
   el.hudFilename.textContent = filename;
+
+  if (el.hudDownloadStatus) {
+    el.hudDownloadStatus.style.display = 'block';
+    el.hudDownloadLabel.textContent = `Generating Toolpaths: ${filename}`;
+    el.hudDownloadPct.textContent = '0%';
+    el.hudDownloadBar.style.width = '0%';
+  }
   showToast(`Parsing ${filename}...`, 'info');
+
   gcodeWorker.postMessage({
     type: 'PARSE',
+    jobId: currentParseJobId,
     gcodeText: gcodeStr,
   });
 }
 
 function loadDemo() {
   const demoStr = generateDemoGcode();
-  parseGcodeString(demoStr, 'demo_twisted_vase.gcode');
+  parseGcodeString(demoStr, 'demo_twisted_vase.gcode', true);
 }
 
-let isDownloadingGcode = false;
-
 async function loadActiveJobFile(filename) {
-  if (isDownloadingGcode || (parsedGcode && loadedFilename === filename)) return;
-  isDownloadingGcode = true;
+  if (!filename) return;
+  // If already loaded or in progress for this exact file, do NOT re-run
+  if (activeJobFile === filename && (isDownloadingGcode || isParsingGcode || (parsedGcode && loadedFilename === filename))) {
+    return;
+  }
+
+  activeJobFile = filename;
   loadedFilename = filename;
   el.hudFilename.textContent = filename;
 
   // 1. Check local IndexedDB cache first
   const cached = await getCachedGcode(filename);
   if (cached) {
-    showToast(`Loaded ${filename} from cache! Parsing toolpaths...`, 'success');
+    showToast(`Loaded ${filename} from cache!`, 'success');
     parseGcodeString(cached, filename);
-    isDownloadingGcode = false;
     return;
   }
 
   // 2. Stream download from printer
+  if (isDownloadingGcode) return;
+  isDownloadingGcode = true;
+
   if (el.hudDownloadStatus) {
     el.hudDownloadStatus.style.display = 'block';
     el.hudDownloadLabel.textContent = `Downloading ${filename}`;
@@ -241,6 +280,7 @@ async function loadActiveJobFile(filename) {
   } catch (err) {
     if (el.hudDownloadStatus) el.hudDownloadStatus.style.display = 'none';
     showToast(`Failed to download G-code: ${err.message}`, 'error');
+    activeJobFile = null;
   } finally {
     isDownloadingGcode = false;
   }
@@ -269,8 +309,10 @@ function handleTelemetry(t) {
   if (t.progress !== undefined) lastReportedProgress = Number(t.progress);
 
   // Auto-download active job file if printing
-  if (t.filename && (!parsedGcode || loadedFilename !== t.filename) && activeMode === 'OCTO_LIVE') {
-    loadActiveJobFile(t.filename);
+  if (t.filename && activeMode === 'OCTO_LIVE') {
+    if (activeJobFile !== t.filename && loadedFilename !== t.filename) {
+      loadActiveJobFile(t.filename);
+    }
   }
 
   // Update Coordinates
@@ -614,7 +656,8 @@ function setupEventListeners() {
         showToast(`Downloading ${filename}: ${mbLoaded}MB / ${mbTotal}MB${pct}`, 'info');
       });
       showToast(`Downloaded ${filename}! Parsing toolpaths...`, 'info');
-      parseGcodeString(text, filename);
+      await setCachedGcode(filename, text);
+      parseGcodeString(text, filename, true);
       closeModal();
       connectToPrinter();
     } catch (err) {
@@ -651,7 +694,7 @@ function handleLoadedFile(file) {
   reader.onload = (evt) => {
     activeMode = 'SIMULATION';
     setAppStatus('SIMULATING', 'Simulating');
-    parseGcodeString(evt.target.result, file.name);
+    parseGcodeString(evt.target.result, file.name, true);
   };
   reader.readAsText(file);
 }

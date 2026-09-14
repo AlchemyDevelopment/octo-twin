@@ -3,20 +3,36 @@
  * Uses index scanning to handle multi-megabyte files with minimal memory overhead.
  */
 
+let currentJobId = 0;
+
 self.onmessage = function (e) {
-  const { type, gcodeText } = e.data;
+  const { type, gcodeText, jobId } = e.data;
 
   if (type === 'PARSE') {
+    currentJobId = jobId || Date.now();
+    const thisJob = currentJobId;
     try {
-      const result = parseGcode(gcodeText);
-      self.postMessage({ type: 'SUCCESS', ...result });
+      const result = parseGcode(
+        gcodeText,
+        (pct) => {
+          if (currentJobId === thisJob) {
+            self.postMessage({ type: 'PROGRESS', jobId: thisJob, percent: pct });
+          }
+        },
+        () => currentJobId !== thisJob
+      );
+      if (result && currentJobId === thisJob) {
+        self.postMessage({ type: 'SUCCESS', jobId: thisJob, ...result });
+      }
     } catch (err) {
-      self.postMessage({ type: 'ERROR', error: err.message });
+      if (currentJobId === thisJob) {
+        self.postMessage({ type: 'ERROR', jobId: thisJob, error: err.message });
+      }
     }
   }
 };
 
-function parseGcode(text) {
+function parseGcode(text, onProgress, isCancelled) {
   const textLen = text.length;
   let lineStart = 0;
 
@@ -181,12 +197,11 @@ function parseGcode(text) {
       }
     }
 
-    if (lineCount - lastProgressReport > 50000) {
+    if (lineCount - lastProgressReport > 30000) {
+      if (isCancelled && isCancelled()) return null;
       lastProgressReport = lineCount;
-      self.postMessage({
-        type: 'PROGRESS',
-        percent: Math.round((lineStart / textLen) * 100),
-      });
+      const pct = Math.round((lineStart / textLen) * 100);
+      if (onProgress) onProgress(pct);
     }
   }
 
