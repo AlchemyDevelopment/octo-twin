@@ -233,7 +233,7 @@ export class OctoService {
     const poll = async () => {
       try {
         const headers = this.getAuthHeaders();
-        const resp = await fetch(queryUrl, { headers, credentials: 'include' });
+        const resp = await fetch(queryUrl, { headers, credentials: 'omit' });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
@@ -277,8 +277,8 @@ export class OctoService {
         const headers = { 'Content-Type': 'application/json', ...this.getAuthHeaders() };
 
         const [jobResp, printerResp] = await Promise.all([
-          fetch(`${base}/api/job`, { headers, credentials: 'include' }),
-          fetch(`${base}/api/printer`, { headers, credentials: 'include' }),
+          fetch(`${base}/api/job`, { headers, credentials: 'omit' }),
+          fetch(`${base}/api/printer`, { headers, credentials: 'omit' }),
         ]);
 
         if (!jobResp.ok) throw new Error(`HTTP ${jobResp.status} from OctoPrint`);
@@ -326,21 +326,21 @@ export class OctoService {
     let targetFilename = 'model.gcode';
 
     if (printerType === 'moonraker') {
-      const statsResp = await fetch(`${base}/printer/objects/query?print_stats=filename`, { headers, credentials: 'include' });
+      const statsResp = await fetch(`${base}/printer/objects/query?print_stats=filename`, { headers, credentials: 'omit' });
       const stats = await statsResp.json();
       const filename = stats?.result?.status?.print_stats?.filename;
       if (!filename) throw new Error('No active file printing in Moonraker');
       targetFilename = filename;
       downloadUrl = `${base}/server/files/gcodes/${encodeURIComponent(filename)}`;
     } else {
-      const jobResp = await fetch(`${base}/api/job`, { headers, credentials: 'include' });
+      const jobResp = await fetch(`${base}/api/job`, { headers, credentials: 'omit' });
       const job = await jobResp.json();
       downloadUrl = job?.job?.file?.resource;
       targetFilename = job?.job?.file?.name || 'model.gcode';
       if (!downloadUrl) throw new Error('No active file found in OctoPrint');
     }
 
-    const fileResp = await fetch(downloadUrl, { headers, credentials: 'include' });
+    const fileResp = await fetch(downloadUrl, { headers, credentials: 'omit' });
     if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
 
     const contentLength = fileResp.headers.get('content-length');
