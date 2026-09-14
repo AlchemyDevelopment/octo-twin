@@ -90,8 +90,15 @@ export class OctoService {
   }
 
   disconnect() {
+    this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
       try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
         this.ws.close();
       } catch (e) {}
       this.ws = null;
@@ -105,7 +112,19 @@ export class OctoService {
   }
 
   async connectMoonraker(base) {
-    // 1. Try WebSocket connection
+    // 1. Start reliable HTTP polling immediately
+    this.startMoonrakerPolling(base);
+
+    // 2. Also establish WebSocket for instant real-time telemetry
+    this.startMoonrakerWebSocket(base);
+  }
+
+  startMoonrakerWebSocket(base) {
+    if (this.ws) {
+      try { this.ws.close(); } catch (e) {}
+      this.ws = null;
+    }
+
     const wsProto = base.startsWith('https') ? 'wss://' : 'ws://';
     const wsHost = base.replace(/^https?:\/\//, '');
     const wsUrl = `${wsProto}${wsHost}/websocket`;
@@ -116,6 +135,7 @@ export class OctoService {
       this.ws.onopen = () => {
         this.isConnected = true;
         this.emit({ type: 'STATUS', status: 'CONNECTED', mode: 'WEBSOCKET' });
+        this.startHeartbeat();
 
         // Subscribe to printer telemetry objects
         const subMsg = {
@@ -134,7 +154,7 @@ export class OctoService {
         };
         this.ws.send(JSON.stringify(subMsg));
 
-        // Also query full state immediately to guarantee initial snapshot
+        // Initial snapshot
         const queryMsg = {
           jsonrpc: '2.0',
           method: 'printer.objects.query',
@@ -162,19 +182,38 @@ export class OctoService {
       };
 
       this.ws.onerror = (err) => {
-        console.warn('Moonraker WS encountered error, falling back to HTTP polling', err);
-        this.startMoonrakerPolling(base);
+        console.warn('Moonraker WS error:', err);
       };
 
       this.ws.onclose = () => {
-        if (this.isConnected) {
-          this.isConnected = false;
-          this.emit({ type: 'STATUS', status: 'DISCONNECTED' });
+        this.stopHeartbeat();
+        // Automatically schedule reconnect in 3s without interrupting polling
+        if (!this.reconnectTimer) {
+          this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.startMoonrakerWebSocket(base);
+          }, 3000);
         }
       };
     } catch (e) {
-      console.warn('Failed to establish WebSocket, falling back to polling', e);
-      this.startMoonrakerPolling(base);
+      console.warn('WebSocket launch error:', e);
+    }
+  }
+
+  startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        // Keep Cloudflare / Nginx / OctoEverywhere proxy active
+        this.ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'server.info', id: 999 }));
+      }
+    }, 15000);
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 

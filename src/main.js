@@ -100,6 +100,31 @@ function init() {
   octoService = new OctoService();
   simulator = new PrintSimulator(gcodeRenderer, toolhead, handleTelemetry);
 
+  // Register telemetry listener ONCE
+  octoService.onTelemetry((msg) => {
+    if (msg.type === 'STATUS') {
+      if (msg.status === 'CONNECTED') {
+        activeMode = 'OCTO_LIVE';
+        simulator.pause();
+        updatePlayPauseButton(false);
+        setAppStatus('ONLINE', `Live (${msg.mode})`);
+        showToast('Connected to live printer stream!', 'success');
+      } else if (msg.status === 'DISCONNECTED') {
+        setAppStatus('DISCONNECTED', 'Reconnecting...');
+      } else if (msg.status === 'ERROR') {
+        setAppStatus('ERROR', 'Error');
+      }
+    } else if (msg.type === 'TELEMETRY') {
+      if (activeMode !== 'OCTO_LIVE') {
+        activeMode = 'OCTO_LIVE';
+        simulator.pause();
+        updatePlayPauseButton(false);
+        setAppStatus('ONLINE', 'Live Sync');
+      }
+      handleTelemetry(msg);
+    }
+  });
+
   // 3. Worker for G-code parsing
   initWorker();
 
@@ -120,8 +145,6 @@ function init() {
   // 7. Auto-connect to printer immediately
   autoConnectAndSync();
 }
-
-let hasAutoLoadedActiveJob = false;
 
 async function autoConnectAndSync() {
   setAppStatus('SIMULATING', 'Connecting to Ender 5 Plus...');
@@ -687,23 +710,6 @@ async function connectToPrinter() {
 
   showToast('Connecting to OctoEverywhere / Printer...', 'info');
   simulator.pause();
-
-  octoService.onTelemetry((msg) => {
-    if (msg.type === 'STATUS') {
-      if (msg.status === 'CONNECTED') {
-        activeMode = 'OCTO_LIVE';
-        setAppStatus('ONLINE', `Live (${msg.mode})`);
-        showToast('Connected to printer live stream!', 'success');
-      } else if (msg.status === 'DISCONNECTED') {
-        setAppStatus('DISCONNECTED', 'Disconnected');
-      } else if (msg.status === 'ERROR') {
-        setAppStatus('ERROR', 'Error');
-        showToast(`Connection error: ${msg.error}`, 'error');
-      }
-    } else if (msg.type === 'TELEMETRY') {
-      handleTelemetry(msg);
-    }
-  });
 
   try {
     await octoService.connect();
