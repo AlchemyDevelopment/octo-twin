@@ -6,7 +6,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
  * camera view presets, and render loop.
  */
 export class PrinterScene {
-  constructor(containerElement, bedDimensions = { x: 235, y: 235, z: 250 }) {
+  constructor(containerElement, bedDimensions = { x: 350, y: 350, z: 400 }) {
     this.container = containerElement;
     this.bedDimensions = bedDimensions;
 

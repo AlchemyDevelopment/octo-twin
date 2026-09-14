@@ -22,7 +22,7 @@ export class OctoService {
       }
     }
     return {
-      serverUrl: '',
+      serverUrl: 'https://ender5plus.octoeverywhere.com',
       apiKey: '',
       printerType: 'moonraker', // 'moonraker' | 'octoprint'
       webcamUrl: '',
@@ -46,7 +46,26 @@ export class OctoService {
 
   cleanUrl(url) {
     if (!url) return '';
-    return url.trim().replace(/\/+$/, '');
+    // Strip hash fragment and query parameters, plus trailing slashes
+    let cleaned = url.trim().split('#')[0].split('?')[0].replace(/\/+$/, '');
+    if (!cleaned.startsWith('http://') && !cleaned.startsWith('https://')) {
+      cleaned = 'https://' + cleaned;
+    }
+    return cleaned;
+  }
+
+  getAuthHeaders() {
+    const headers = {};
+    const key = (this.config.apiKey || '').trim();
+    if (key) {
+      if (key.startsWith('Bearer ') || key.startsWith('Basic ')) {
+        headers['Authorization'] = key;
+      } else {
+        headers['X-Api-Key'] = key;
+        headers['Authorization'] = `Bearer ${key}`;
+      }
+    }
+    return headers;
   }
 
   async connect() {
@@ -185,12 +204,8 @@ export class OctoService {
 
     const poll = async () => {
       try {
-        const headers = {};
-        if (this.config.apiKey) {
-          headers['X-Api-Key'] = this.config.apiKey;
-        }
-
-        const resp = await fetch(queryUrl, { headers });
+        const headers = this.getAuthHeaders();
+        const resp = await fetch(queryUrl, { headers, credentials: 'include' });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = await resp.json();
 
@@ -231,14 +246,11 @@ export class OctoService {
 
     const poll = async () => {
       try {
-        const headers = { 'Content-Type': 'application/json' };
-        if (this.config.apiKey) {
-          headers['X-Api-Key'] = this.config.apiKey;
-        }
+        const headers = { 'Content-Type': 'application/json', ...this.getAuthHeaders() };
 
         const [jobResp, printerResp] = await Promise.all([
-          fetch(`${base}/api/job`, { headers }),
-          fetch(`${base}/api/printer`, { headers }),
+          fetch(`${base}/api/job`, { headers, credentials: 'include' }),
+          fetch(`${base}/api/printer`, { headers, credentials: 'include' }),
         ]);
 
         if (!jobResp.ok) throw new Error(`HTTP ${jobResp.status} from OctoPrint`);
@@ -277,30 +289,29 @@ export class OctoService {
   }
 
   async downloadCurrentGcode() {
-    const { serverUrl, printerType, apiKey } = this.config;
+    const { serverUrl, printerType } = this.config;
     if (!serverUrl) throw new Error('Server URL not configured');
     const base = this.cleanUrl(serverUrl);
-    const headers = {};
-    if (apiKey) headers['X-Api-Key'] = apiKey;
+    const headers = this.getAuthHeaders();
 
     if (printerType === 'moonraker') {
       // First find active filename from print_stats
-      const statsResp = await fetch(`${base}/printer/objects/query?print_stats=filename`, { headers });
+      const statsResp = await fetch(`${base}/printer/objects/query?print_stats=filename`, { headers, credentials: 'include' });
       const stats = await statsResp.json();
       const filename = stats?.result?.status?.print_stats?.filename;
       if (!filename) throw new Error('No active file printing in Moonraker');
 
-      const fileResp = await fetch(`${base}/server/files/gcodes/${encodeURIComponent(filename)}`, { headers });
+      const fileResp = await fetch(`${base}/server/files/gcodes/${encodeURIComponent(filename)}`, { headers, credentials: 'include' });
       if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
       return await fileResp.text();
     } else {
       // OctoPrint
-      const jobResp = await fetch(`${base}/api/job`, { headers });
+      const jobResp = await fetch(`${base}/api/job`, { headers, credentials: 'include' });
       const job = await jobResp.json();
       const fileUrl = job?.job?.file?.resource;
       if (!fileUrl) throw new Error('No active file found in OctoPrint');
 
-      const fileResp = await fetch(fileUrl, { headers });
+      const fileResp = await fetch(fileUrl, { headers, credentials: 'include' });
       if (!fileResp.ok) throw new Error(`Failed to download G-code: HTTP ${fileResp.status}`);
       return await fileResp.text();
     }
