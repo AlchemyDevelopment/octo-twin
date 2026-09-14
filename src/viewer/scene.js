@@ -107,7 +107,7 @@ export class PrinterScene {
       roughness: 0.4,
     });
     this.edgeMesh = new THREE.Mesh(edgeGeom, this.edgeMaterial);
-    edgeMesh.position.set(x / 2, y / 2, -2.1);
+    this.edgeMesh.position.set(x / 2, y / 2, -2.1);
     this.bedGroup.add(this.edgeMesh);
 
     // 3. Precision 10mm Grid lines (aligned to printer dimensions)
